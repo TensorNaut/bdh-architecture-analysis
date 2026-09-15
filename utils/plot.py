@@ -17,7 +17,7 @@ def load_logs(path="results/log.jsonl"):
     with open(path) as f:
         for line in f:
             d = json.loads(line)
-            data[d["model"]].append((d["step"], d["loss"]))
+            data[d["model"]].append(d)
 
     return data
 
@@ -29,15 +29,15 @@ def moving_avg(x, k=20):
     return np.convolve(x, np.ones(k) / k, mode="valid")
 
 
-# 🔥 1. Raw loss curves
+# 1. Raw loss curves
 def plot_loss():
     data = load_logs()
 
     plt.figure()
 
-    for model, values in data.items():
-        steps = [v[0] for v in values]
-        losses = [v[1] for v in values]
+    for model, entries in data.items():
+        steps = [e["step"] for e in entries]
+        losses = [e["loss"] for e in entries]
 
         plt.plot(steps, losses, label=model)
 
@@ -50,14 +50,14 @@ def plot_loss():
     plt.close()
 
 
-# 🔥 2. Smoothed curves
+# 2. Smoothed curves
 def plot_smooth():
     data = load_logs()
 
     plt.figure()
 
-    for model, values in data.items():
-        losses = [v[1] for v in values]
+    for model, entries in data.items():
+        losses = [e["loss"] for e in entries]
         sm = moving_avg(losses)
 
         plt.plot(sm, label=model)
@@ -71,7 +71,7 @@ def plot_smooth():
     plt.close()
 
 
-# 🔥 3. Bar chart (final comparison)
+# 3. Bar chart (final comparison)
 def plot_bar():
     from utils.metrics import summarize
 
@@ -91,7 +91,7 @@ def plot_bar():
     plt.close()
 
 
-# 🔥 4. Component impact
+# 4. Component impact
 def plot_component():
     from utils.metrics import summarize
 
@@ -112,4 +112,32 @@ def plot_component():
     plt.title("Component Impact")
 
     plt.savefig(f"{SAVE_DIR}/component_impact.png")
+    plt.close()
+
+
+# 5. Train vs val loss (overfitting check) -- new
+def plot_overfit_gap():
+    data = load_logs()
+
+    plt.figure()
+
+    for model, entries in data.items():
+        val_entries = [e for e in entries if "val_loss" in e]
+        if not val_entries:
+            continue
+
+        steps = [e["step"] for e in val_entries]
+        train_at_val_steps = [e["loss"] for e in val_entries]
+        val_losses = [e["val_loss"] for e in val_entries]
+
+        line, = plt.plot(steps, val_losses, linestyle="-", label=f"{model} val")
+        plt.plot(steps, train_at_val_steps, linestyle="--", color=line.get_color(),
+                  alpha=0.6, label=f"{model} train")
+
+    plt.xlabel("Steps")
+    plt.ylabel("Loss")
+    plt.title("Train vs Validation Loss (dashed = train, solid = val)")
+    plt.legend(fontsize=7)
+
+    plt.savefig(f"{SAVE_DIR}/overfit_gap.png")
     plt.close()

@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as cp
 
 
 class Attention(nn.Module):
@@ -52,6 +53,36 @@ class BDH(nn.Module):
 
         self.lm_head = nn.Linear(self.n_embd, config.vocab_size, bias=False)
 
+    def _layer(self, x, B, T):
+        # ---- latent ----
+        x_latent = x @ self.encoder
+        x_sparse = F.relu(x_latent)
+
+        # ---- attention ----
+        y = self.attn(x_sparse, x_sparse, x)
+        y = self.ln(y)
+
+        # ---- second branch ----
+        y_latent = y @ self.encoder_v
+        y_sparse = F.relu(y_latent)
+
+        # ❌ CHANGED: multiplicative → additive
+        xy = x_sparse + y_sparse
+
+        xy = self.drop(xy)
+
+        # ---- decode ----
+        y_mlp = (
+            xy.transpose(1, 2)
+            .reshape(B, 1, T, self.n_head * self.N)
+            @ self.decoder
+        )
+
+        y_out = self.ln(y_mlp)
+
+        # ---- residual ----
+        return self.ln(x + y_out)
+
     def forward(self, idx, targets=None):
         B, T = idx.shape
 
@@ -59,35 +90,10 @@ class BDH(nn.Module):
         x = self.ln(x)
 
         for _ in range(self.n_layer):
-
-            # ---- latent ----
-            x_latent = x @ self.encoder
-            x_sparse = F.relu(x_latent)
-
-            # ---- attention ----
-            y = self.attn(x_sparse, x_sparse, x)
-            y = self.ln(y)
-
-            # ---- second branch ----
-            y_latent = y @ self.encoder_v
-            y_sparse = F.relu(y_latent)
-
-            # ❌ CHANGED: multiplicative → additive
-            xy = x_sparse + y_sparse
-
-            xy = self.drop(xy)
-
-            # ---- decode ----
-            y_mlp = (
-                xy.transpose(1, 2)
-                .reshape(B, 1, T, self.n_head * self.N)
-                @ self.decoder
-            )
-
-            y_out = self.ln(y_mlp)
-
-            # ---- residual ----
-            x = self.ln(x + y_out)
+            if self.training:
+                x = cp.checkpoint(self._layer, x, B, T, use_reentrant=False)
+            else:
+                x = self._layer(x, B, T)
 
         x = x.view(B, T, self.n_embd)
         logits = self.lm_head(x)

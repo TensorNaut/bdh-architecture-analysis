@@ -84,3 +84,5 @@ This project addresses the central question:
 
 ## 👤 Author
 **Nitin Saini**
+**Tushar Jagatap**
+**Aditya Khamitkar**
